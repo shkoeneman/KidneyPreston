@@ -1,0 +1,1581 @@
+---
+title: "Transplant Waitlist Manuscript Analysis, V3"
+author: "Scott Koeneman"
+date: "2024-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+#Clear workspace and set knitr options
+rm(list = objects())
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width=8, fig.height=5)
+#Load desired packages
+#library(data.table)
+#library(tidytable)
+library(glue)
+library(tidyverse)
+library(kableExtra)
+library(ggplot2)
+library(lubridate)
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+```
+
+# Objective
+
+We look at all patients who entered the transplant waitlist, and attempt the quantify the impact of transplant, transplant failure, re-transplant, and
+re-transplant failure as opposed to simply remaining on the waitlist.
+
+## Data
+
+```{r}
+# # #Read in dataset
+# # full_data <- haven::read_dta("../data/KIDPAN_DATA.DTA")
+# # 
+# # full_data <- full_data %>%
+# #   filter(!is.na(WT_QUAL_DATE)) %>%
+# #   mutate(Waitlist.Date = as.Date(WT_QUAL_DATE)) %>%
+# #   filter(!(WL_ORG %in% c("PA","PI"))) %>% #Drop receipt of other organs
+# #   filter(!(TXINT %in% c("W","S"))) %>%
+# #   filter(!(TXHRT %in% c("Y"))) %>%
+# #   filter(!(TXLIV %in% c("W","S"))) %>%
+# #   filter(!(TXLNG %in% c("D","R","L"))) %>%
+# #   filter(!(TXPAN %in% c("S","W"))) %>%
+# #   filter(!(DON_TY %in% c("L")))
+# # 
+# # first_WL <- full_data %>%
+# #   group_by(PT_CODE) %>%
+# #   arrange(Waitlist.Date) %>%
+# #   filter(row_number()==1) %>%
+# #   filter(INIT_AGE > 18 & !(is.na(INIT_AGE))) %>% #Filter out those with missing age or who are less than 18
+# #   filter(!is.na(Waitlist.Date)) %>%
+# #   .$PT_CODE
+# # 
+# # full_data <- full_data %>%
+# #   filter(PT_CODE %in% first_WL)
+# # 
+# # full_data <- full_data %>%
+# #   group_by(PT_CODE) %>%
+# #   mutate(Initial.Entry = min(Waitlist.Date)) %>%
+# #   filter(Initial.Entry >= as.Date("2005-01-01") & Initial.Entry < as.Date("2018-01-01")) %>%
+# #   mutate(ID = PT_CODE) %>%
+# #   arrange(PT_CODE) %>%
+# # 
+# # #Write out data
+# # saveRDS(full_data, file = "../data/Full_Cohort_Updated.rds")
+# 
+# full_data <- readRDS(file = "../data/Full_Cohort_Updated.rds")
+# 
+# #Survival dataset
+# full_data <- full_data %>%
+#   filter(!is.na(DGN_TCR) & !is.na(INIT_BMI_CALC)) %>% #Filter out those with missing values in matching variables
+#   mutate(Death = ifelse(is.na(COMPOSITE_DEATH_DATE),0,1)) %>%
+#   mutate(Transplant = ifelse(is.na(TX_DATE),0,1)) %>%
+#   mutate(Transplant.Fail = ifelse(is.na(FAILDATE_KI),0,1)) %>%
+#   mutate(Retransplant = ifelse(is.na(RETXDATE_KI),0,1)) %>%
+#   mutate(Retransplant.Fail = 0) %>%
+#   mutate(Waitlist.Date = as.Date(WT_QUAL_DATE)) %>%
+#   mutate(Transplant.Date = as.Date(TX_DATE)) %>%
+#   mutate(Retransplant.Date = as.Date(RETXDATE_KI)) %>%
+#   mutate(Fail.Date = as.Date(FAILDATE_KI)) %>%
+#   mutate(Retransplant.Fail.Date = NA) %>%
+#   mutate(Death.Date = as.Date(COMPOSITE_DEATH_DATE)) %>%
+#   mutate(End.Date = ifelse(Transplant == 1, as.Date(PX_STAT_DATE), as.Date(END_DATE))) %>%
+#   mutate(ID = PT_CODE) %>%
+#   arrange(PT_CODE, Waitlist.Date) %>%
+#   mutate(ECD_DONOR = ifelse(ECD_DONOR == 1 | (!is.na(KDPI) & KDPI >= 0.85),1,0))
+# 
+# patient_data <- full_data %>%
+#   group_by(ID) %>%
+#   select(ID, Waitlist.Date, Transplant.Date, Retransplant.Date, Fail.Date, End.Date, Death.Date, Retransplant.Fail.Date,
+#          Death, Transplant, Transplant.Fail, Retransplant, Retransplant.Fail,
+#          INIT_AGE, INIT_BMI_CALC, GENDER, ON_DIALYSIS, ETHNICITY, ETHCAT, DGN_TCR,
+#          DIAL_DATE, DIAL_TRR, DIALYSIS_DATE,
+#          AGE, BMI_CALC, FUNC_STAT_TRR, DIAG_KI, PERIP_VASC, EXH_VASC_ACCESS, GFR, PEAK_PRA, DAYSWAIT_CHRON_KI, #Recipient variables for transplant modeling
+#          AGE_DON, BMI_DON_CALC, ABO_MAT, COD_CAD_DON, GENDER_DON, CREAT_DON, DIABETES_DON, INSULIN_DEP_DON, #Donor variables for transplant modeling
+#          HIST_HYPERTENS_DON, COLD_ISCH_KI, BLOOD_INF_DON, HIST_CIG_DON, ECD_DONOR, INOTROP_SUPPORT_DON, HEP_C_ANTI_DON,
+#          HGT_CM_DON_CALC, WGT_KG_DON_CALC, ETHCAT_DON, HIST_HYPERTENS_DON, DIABETES_DON, CREAT_DON, HCV_NAT_DON, DONOR_ID) %>%
+#   arrange(Waitlist.Date) %>%
+#   filter(row_number()==1)
+# 
+# full_data <- full_data[,440:472]
+# 
+# for(ii in 1:nrow(patient_data)){
+#   #Get all data for this patient
+#   this_ID <- patient_data$ID[ii]
+#   this_data <- full_data %>% filter(ID == this_ID)
+#   if(nrow(this_data)==1){
+#     next
+#   }
+#   #Get whether each event occurred
+#   patient_data$Death[ii] <- as.numeric(sum(this_data$Death, na.rm=TRUE)>0)
+#   patient_data$Transplant[ii] <- as.numeric(sum(this_data$Transplant, na.rm=TRUE)>0)
+#   patient_data$Transplant.Fail[ii] <- as.numeric(sum(this_data$Transplant.Fail, na.rm=TRUE)>0)
+#   transplant.dates <- unique(c(this_data$Transplant.Date,this_data$Retransplant.Date))
+#   transplant.dates <- transplant.dates[!is.na(transplant.dates)]
+#   patient_data$Retransplant[ii] <- as.numeric(length(transplant.dates)>1)
+#   fail.dates <- unique(c(this_data$Fail.Date))
+#   fail.dates <- fail.dates[!is.na(fail.dates)]
+#   patient_data$Retransplant.Fail <- as.numeric(length(fail.dates)>1)
+#   #Get starting waitlist date for all patients and end date
+#   patient_data$Waitlist.Date[ii] <- min(this_data$Waitlist.Date, na.rm=TRUE)
+#   patient_data$End.Date[ii] <- max(this_data$End.Date, na.rm=TRUE)
+#   #Now get outcomes
+#   #Death
+#   if(patient_data$Death[ii]){
+#     patient_data$Death.Date[ii] <- min(this_data$Death.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Death.Date[ii] <- NA
+#   }
+#   #Transplant
+#   if(patient_data$Transplant[ii]){
+#     patient_data$Transplant.Date[ii] <- min(this_data$Transplant.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Transplant.Date[ii] <- NA
+#   }
+#   #Transplant failure
+#   if(patient_data$Transplant.Fail[ii]){
+#     patient_data$Fail.Date[ii] <- min(this_data$Fail.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Fail.Date[ii] <- NA
+#   }
+#   #Retransplant -> need to be careful there
+#   if(patient_data$Retransplant[ii]){
+#     patient_data$Retransplant.Date[ii] <- transplant.dates[2]
+#   } else{
+#     patient_data$Retransplant.Date[ii] <- NA
+#   }
+#   #Retransplant failure
+#   if(patient_data$Retransplant.Fail[ii]){
+#     patient_data$Retransplant.Fail.Date[ii] <- transplant.dates[2]
+#   } else{
+#     patient_data$Retransplant.Fail.Date[ii] <- NA
+#   }
+# }
+# 
+# #Do this in parallel to try to speed things up...
+# library(parallel)
+# 
+# cluster <- parallel::makeCluster(parallel::detectCores()-2)
+# parallel::clusterExport(cluster, varlist = c("patient_data","full_data"))
+# parallel::clusterEvalQ(cluster,{
+# library(tidyverse)
+# library(kableExtra)
+# library(ggplot2)
+# library(lubridate)
+# })
+# 
+# the_data <- do.call(bind_rows,parLapply(cluster, 1:nrow(patient_data), fun = function(ii){
+#   #Get all data for this patient
+#   this_ID <- patient_data$ID[ii]
+#   this_data <- full_data %>% filter(ID == this_ID)
+#   if(nrow(this_data)==1){
+#     return(patient_data[ii,])
+#   }
+#   #Get whether each event occurred
+#   patient_data$Death[ii] <- as.numeric(sum(this_data$Death, na.rm=TRUE)>0)
+#   patient_data$Transplant[ii] <- as.numeric(sum(this_data$Transplant, na.rm=TRUE)>0)
+#   patient_data$Transplant.Fail[ii] <- as.numeric(sum(this_data$Transplant.Fail, na.rm=TRUE)>0)
+#   transplant.dates <- unique(c(this_data$Transplant.Date,this_data$Retransplant.Date))
+#   transplant.dates <- transplant.dates[!is.na(transplant.dates)]
+#   patient_data$Retransplant[ii] <- as.numeric(length(transplant.dates)>1)
+#   fail.dates <- unique(c(this_data$Fail.Date))
+#   fail.dates <- fail.dates[!is.na(fail.dates)]
+#   patient_data$Retransplant.Fail <- as.numeric(length(fail.dates)>1)
+#   #Get starting waitlist date for all patients and end date
+#   patient_data$Waitlist.Date[ii] <- min(this_data$Waitlist.Date, na.rm=TRUE)
+#   patient_data$End.Date[ii] <- max(this_data$End.Date, na.rm=TRUE)
+#   #Now get outcomes
+#   #Death
+#   if(patient_data$Death[ii]){
+#     patient_data$Death.Date[ii] <- min(this_data$Death.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Death.Date[ii] <- NA
+#   }
+#   #Transplant
+#   if(patient_data$Transplant[ii]){
+#     patient_data$Transplant.Date[ii] <- min(this_data$Transplant.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Transplant.Date[ii] <- NA
+#   }
+#   #Transplant failure
+#   if(patient_data$Transplant.Fail[ii]){
+#     patient_data$Fail.Date[ii] <- min(this_data$Fail.Date, na.rm=TRUE)
+#   } else{
+#     patient_data$Fail.Date[ii] <- NA
+#   }
+#   #Retransplant -> need to be careful there
+#   if(patient_data$Retransplant[ii]){
+#     patient_data$Retransplant.Date[ii] <- transplant.dates[2]
+#   } else{
+#     patient_data$Retransplant.Date[ii] <- NA
+#   }
+#   #Retransplant failure
+#   if(patient_data$Retransplant.Fail[ii]){
+#     patient_data$Retransplant.Fail.Date[ii] <- fail.dates[2]
+#   } else{
+#     patient_data$Retransplant.Fail.Date[ii] <- NA
+#   }
+#   return(patient_data[ii,])
+# }
+# ))
+# 
+# parallel::stopCluster(cluster)
+# rm(cluster)
+# 
+# patient_data <- the_data
+# 
+# #saveRDS(patient_data, file = "~/Full_Patient_Cohort_Updated.rds")
+# #
+# saveRDS(patient_data, file = "../data/Full_Patient_Cohort_Updated.rds")
+# 
+# full_data <- readRDS(file = "../data/Full_Patient_Cohort_Updated.rds")
+# 
+# dec_don_data <- data.table::fread("../data/DECEASED_DONOR_DATA.csv") %>%
+#   mutate(DONOR_ID = as.character(DONOR_ID))
+# 
+# full_data <- full_data %>%
+#   mutate(DONOR_ID = as.character(DONOR_ID)) %>%
+#   left_join(dec_don_data %>% select(DONOR_ID, DBD),by="DONOR_ID") %>%
+#   mutate(DBD = ifelse(is.na(DBD),0,DBD)) %>%
+#   mutate(DCD = ifelse(Transplant == 1 & DBD == 0,1,0))
+# 
+# rm(dec_don_data)
+# 
+# saveRDS(full_data, file = "../data/Full_Patient_Cohort_Final.rds")
+
+full_data <- readRDS(file = "../data/Full_Patient_Cohort_Final.rds")
+
+full_data <- full_data %>%
+  mutate(Dialysis.Date = as.Date(DIALYSIS_DATE)) %>%
+  mutate(Start.Date = as.Date(DIALYSIS_DATE)) %>%
+  mutate(Time.to.Transplant = as.numeric(Transplant.Date - Start.Date)/365) %>%
+  filter(is.na(Time.to.Transplant) | Time.to.Transplant>0) %>%
+  mutate(Time.to.Retransplant =  as.numeric(Retransplant.Date - Start.Date)/365) %>%
+  mutate(Time.to.Fail = as.numeric(Fail.Date - Start.Date)/365) %>%
+  mutate(Time.to.Retransplant.Fail =  as.numeric(as.Date(Retransplant.Fail.Date) - Start.Date)/365) %>%
+  mutate(Time.from.Transplant.to.Fail = as.numeric(Time.to.Fail-Time.to.Transplant)) %>%
+  mutate(Time.from.Fail.to.Retransplant = as.numeric(Time.to.Retransplant-Time.to.Fail)) %>%
+  mutate(Time.from.Retransplant.to.Fail = as.numeric(Time.to.Retransplant.Fail-Time.to.Retransplant)) %>%
+  mutate(Time.to.Death = as.numeric(as.Date(Death.Date) - as.Date(Start.Date) )/365) %>%
+  mutate(Followup.Date = ifelse(!is.na(Death.Date), Death.Date,
+                                End.Date)) %>%
+  mutate(Followup.Time = as.numeric(as.Date(Followup.Date) - as.Date(Start.Date))/365) %>%
+  filter(Followup.Time > 0) %>%
+  filter(!is.na(INIT_BMI_CALC)) #Filter out those with missing values in matching variables
+
+#Now we look at DGN_TCR values and only take the top 8 in frequency
+dgn_map <- read_csv("../data/DGN_TCR_Encodings.csv")
+dgn_map <- dgn_map[,2:3]
+colnames(dgn_map) <- c("DGN_TCR","DX.Desc")
+full_data <- full_data %>%
+  mutate(DGN_TCR = as.character(DGN_TCR)) %>%
+  left_join(dgn_map, by = "DGN_TCR")
+#Get top occuring DX
+top_dx <- full_data %>%
+  group_by(DGN_TCR) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count))
+top_6_dx <- top_dx$DGN_TCR[1:6]
+#Add top 8 to Full data, labels all others as "Other"
+full_data <- full_data %>%
+  mutate(INIT.DX = ifelse(DGN_TCR %in% top_6_dx,DX.Desc,"Other")) %>%
+  mutate(INIT.DX = ifelse(INIT.DX %in% c("Other","OTHER SPECIFY"),"OTHER",INIT.DX)) %>%
+  mutate(AGE_CAT = ifelse(AGE>= 18 & AGE <= 40,"18-40",
+                          ifelse(AGE >= 41 & AGE <= 60,"41-60",">60"))) %>%
+  mutate(AGE_DON_CAT = ifelse(AGE_DON>= 18 & AGE_DON <= 40,"18-40",
+                          ifelse(AGE_DON >= 41 & AGE_DON <= 60,"41-60",">60"))) %>%
+  mutate(BMI_CALC_CAT = ifelse(BMI_CALC < 20,"<20",
+                               ifelse(BMI_CALC >= 20 & BMI_CALC < 25,"20-24.9",
+                                       ifelse(BMI_CALC >= 25 & BMI_CALC < 30,"25-29.9",
+                                               ifelse(BMI_CALC >= 30 & BMI_CALC < 35,"30-34.9",">=35"))))) %>%
+  mutate(Race = ifelse(ETHCAT == 1,"White",
+                            ifelse(ETHCAT == 2,"Black",
+                                   ifelse(ETHCAT == 4,"Hispanic/Latino",
+                                          ifelse(ETHCAT == 5,"Asian",
+                                                 ifelse(ETHCAT == 6,"Amer Ind/Alaska Native",
+                                                        ifelse(ETHCAT == 7,"Pacific Islander",
+                                                               ifelse(ETHCAT == 9,"Multiracial",NA)))))))) %>%
+  mutate(Race = ifelse(is.na(Race),"Unknown",Race)) %>%
+  mutate(Race = ifelse(Race %in% c("White","Black","Asian"),Race,"Other")) #%>%
+  #mutate(Dialysis.Date = as.Date(DIALYSIS_DATE)) %>%
+  #mutate(Time.to.Dialysis = as.numeric(Dialysis.Date-Waitlist.Date)) %>%
+  #mutate(Dialysis.Time.Baseline = ifelse(Time.to.Dialysis<=0,-1*(Time.to.Dialysis/365),0)) %>%
+  #mutate(Dialysis.Time.Baseline = ifelse(is.na(Dialysis.Time.Baseline),0,Dialysis.Time.Baseline)) %>%
+  #mutate(Baseline.Dialysis = ifelse(Dialysis.Time.Baseline == 0, "None",
+  #                                  ifelse(Dialysis.Time.Baseline <= 2, "0-2Years",">2Years"))) %>%
+  #mutate(Time.to.Dialysis.All = ifelse(Time.to.Dialysis < 0,0,Time.to.Dialysis)) %>%
+  #mutate(Time.to.Dialysis.Post.Waitlist = ifelse(Time.to.Dialysis < 0,NA,Time.to.Dialysis)) %>%
+  #mutate(On.Dialysis.at.Baseline = ifelse(Time.to.Dialysis<=0,1,0)) %>%
+  #mutate(Started.Dialysis.Post.Waitlist = ifelse(Time.to.Dialysis>0,1,0))
+
+
+#Make function to calculate KDRI
+kdri_rao_calc <- function(age,height,weight,eth,hyp,diab,cod,creat,hcv,dcd){
+  if(is.na(age)|is.na(height)|is.na(weight)|is.na(eth)|is.na(hyp)|is.na(diab)|is.na(cod)|is.na(creat)|is.na(hcv)|is.na(dcd)){
+    return(NA)
+  }
+  X <- 0
+  #Do age calc
+  X <- X + 0.0128*(age-40)
+  if(age<18){
+    X <- X - 0.0194*(age-18)
+  } else if(age>50){
+    X <- X + 0.0107*(age-50)
+  }
+  #Height
+  X <- X - (0.0464*(height-170)/10)
+  #Weight
+  if(weight < 80){
+    X <- X - (0.0199*(weight-80)/5)
+  }
+  #Ethnicity
+  if(eth==2){
+    X <- X + 0.1790
+  }
+  #Hypertension History
+  if(hyp == "Y"){
+    X <- X + 0.1260
+  }
+  #Diabetes History 
+  if(diab == "Y"){
+    X <- X + 0.1300
+  }
+  #COD CVA
+  if(cod == 2){
+    X <- X + 0.0881
+  }
+  #Creatinine
+  X <- X + 0.2200*(creat-1)
+  if(creat > 1.5){
+    X <- X - 0.2090*(creat-1.5)
+  }
+  #HCV
+  if(hcv == "P"){
+    X <- X + 0.2400
+  }
+  #DCD
+  if(dcd == 1){
+    X <- X + 0.1330
+  }
+  
+  return(exp(X))
+}
+
+
+full_data <- full_data %>%
+  mutate(KDRI_RAO = kdri_rao_calc(AGE_DON,HGT_CM_DON_CALC,WGT_KG_DON_CALC,ETHCAT_DON,
+                                  HIST_HYPERTENS_DON,DIABETES_DON,COD_CAD_DON,
+                                  CREAT_DON,HCV_NAT_DON,DCD))
+#Get cut points
+cut_points <- quantile(full_data$KDRI_RAO, c(0,.20,.35,.85,1), na.rm=TRUE)
+
+full_data$KDRI_RAO_CAT <- cut(full_data$KDRI_RAO,breaks = cut_points,
+                              labels = c("Less.Than.Equal.20th","Greater.Than.20th.Less.Than.Equal.35th",
+                                         "Greater.Than.35th.Less.Than.Equal.85th","Greater.Than.85th"))
+
+
+#Define helper functions and data
+round2 <- function(x){round(x, digits = 2)}
+round3 <- function(x){round(x, digits = 3)}
+round4 <- function(x){round(x, digits = 4)}
+paste_help <- function(x){
+  return(paste0("(",round3(x[1])," -- ",round3(x[2]),")"))
+}
+  
+
+```
+
+This is a new version of the analysis that makes a major change by now treating dialysis start date as the "index event" as opposed to waitlist qualification
+as the "index event". All time-to-event analysis now uses the dialysis start date as opposed to waitlist qualifying date.
+
+A cohort of adults patients who never got off the transplant waitlist, had a transplant that failed, or had a transplant that never failed on record from
+2005-2018 was constructed. We excluded patients who entered the waitlist at an age less than 18, had no follow-up after starting dialysis, who had a missing
+dialysis start date, or who were transplanted on the same day as dialysis start, as they never spent any time on the waitlist. In this new analysis, there
+were a few patients (6) that received transplants before their listed dialysis start date - these patients were also excluded.
+We also exclude those who had missing values for potential confounding covariates that will be used in our subsequent analysis.
+Overall, we had  `r nrow(full_data)` patients in our final cohort, with `r sum(full_data$Transplant)` patients eventually receiving transplants and  
+`r sum(full_data$Transplant == 0)` patients never receiving transplants.
+
+## Summary Tables
+
+Summary tables for various patient cohorts are found below.
+
+```{r}
+#Define table building functions
+library(survival)
+
+prop_out <- function(field, value){
+  if(is.na(value)){
+    return(data.frame(Category = field,
+                    N.Missing = "",
+                    Count = "",
+                    Proportion = "",
+                    Prop.CI.95 = ""))
+  }
+  index <- which(names(data) == field)
+  this_data <- data %>% as.data.frame() %>% .[,index] %>% as.character()
+  test <- prop.test(sum(this_data == value,na.rm = TRUE),
+                    sum(!is.na(this_data == value)), conf.level = 0.95)
+  return(data.frame(Category = paste0(field,".",value),
+                    N.Missing = as.character(sum(is.na(this_data))),
+                    Count = as.character(sum(this_data == value,na.rm = TRUE)),
+                    Proportion = paste0(as.character(round3(100*test$estimate[1])),"%"),
+                    Prop.CI.95 = as.character(paste_help(test$conf.int))))
+}
+prop_fields <- c("Transplant","Transplant.Fail","Retransplant","Retransplant.Fail","Death",#"ON_DIALYSIS",
+                 #"Baseline.Dialysis","Baseline.Dialysis","Baseline.Dialysis",
+                 #"On.Dialysis.at.Baseline","Started.Dialysis.Post.Waitlist",
+                 "Race","Race","Race","Race",
+                 "GENDER","GENDER","ETHNICITY","ETHNICITY",
+                 "Initial.Diagnosis",rep("INIT.DX",times=8)
+                 )
+
+prop_values <- c("1","1","1","1","1",#"Y",
+                 #"None","0-2Years",">2Years",
+                 #"1","1",
+                 "White","Black","Asian","Other",
+                 "M","F","1","0",
+                 NA,unique(full_data$INIT.DX))
+
+num_out <- function(x){
+  this_data <- data[[x]]
+  test <- t.test(this_data[!is.na(this_data)])
+  return(data.frame(Measure = x,
+                    N.Missing = sum(is.na(this_data)),
+                    Min. = round2(min(this_data, na.rm = TRUE)),
+                    Max. = round2(max(this_data, na.rm = TRUE)),
+                    Mean = round2(mean(this_data, na.rm = TRUE)), SD = round2(sd(this_data, na.rm = TRUE)),
+                    'Quart.1st' = round2(quantile(this_data, prob = 0.25, na.rm = TRUE)),
+                    Median = round2(median(this_data, na.rm = TRUE)),
+                    'Quart.3rd' = round2(quantile(this_data, prob = 0.75, na.rm = TRUE)),
+                    Mean.CI.95 = paste_help(test$conf.int))
+         )
+}
+num_vars <- c("Time.to.Transplant","Time.to.Retransplant","Time.to.Death","Followup.Time","INIT_AGE","INIT_BMI_CALC",#"Dialysis.Time.Baseline",
+              "Time.from.Transplant.to.Fail","Time.from.Fail.to.Retransplant","Time.from.Retransplant.to.Fail"#,
+              #"Time.to.Dialysis","Time.to.Dialysis.All","Time.to.Dialysis.Post.Waitlist"
+              )
+
+table_iter <- 1
+
+####################
+### Total Cohort ###
+####################
+
+data <- full_data
+
+#Categorical table
+
+cat_table <- do.call(bind_rows, lapply(1:length(prop_fields), function(t){
+  return(prop_out(prop_fields[t],prop_values[t]))
+})) %>% as.data.frame()
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+#Print table
+cat_table %>%
+  kable(booktabs = T, longtable = T, caption = "Summary Statistics, Categorical Data, Full Cohort") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+#Numerical table
+sum_table1 <- do.call(rbind,lapply(num_vars, function(t){
+  return(num_out(t)) 
+  })) %>% as.data.frame
+row.names(sum_table1) <- NULL
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+sum_table1 %>%
+  kable(booktabs = T, caption = "Summary Statistics, Numerical Data, Full Cohort") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+# test <- full_data %>%
+#   filter(Transplant.Fail == 1) %>%
+#   mutate(Time.from.Fail.to.Retransplant = ifelse(is.na(Time.from.Fail.to.Retransplant),Followup.Time,Time.from.Fail.to.Retransplant)) %>%
+#   filter(Time.from.Fail.to.Retransplant >= 0)
+# cat("Statistics on Time from Fail to Retransplant, accounting for dropout: \n")
+# plot(survfit(Surv(test$Time.from.Fail.to.Retransplant,test$Retransplant)~1))
+
+
+###################
+### Transplants ###
+###################
+
+prop_fields <- c("Retransplant","Death","ON_DIALYSIS","GENDER","GENDER","ETHNICITY","ETHNICITY",
+                 "Initial.Diagnosis",rep("INIT.DX",times=length(unique(full_data$INIT.DX))),
+                 "Donor Characteristics",
+  "GENDER_DON","GENDER_DON","COD_CAD_DON","COD_CAD_DON","COD_CAD_DON","COD_CAD_DON","COD_CAD_DON",
+  "ECD_DONOR","DIABETES_DON","HIST_CIG_DON","HIST_HYPERTENS_DON","INSULIN_DEP_DON","BLOOD_INF_DON","HEP_C_ANTI_DON","INOTROP_SUPPORT_DON",
+  "KDRI_RAO_CAT","KDRI_RAO_CAT","KDRI_RAO_CAT","KDRI_RAO_CAT"
+                 )
+
+prop_values <- c("1","1","Y","M","F","1","0",
+                 NA,unique(full_data$INIT.DX),
+                 NA,
+                 "M","F","1","2","3","4","999",
+                 "1","1","1","1","1","1","1","1",
+                 "Less.Than.Equal.20th","Greater.Than.20th.Less.Than.Equal.35th","Greater.Than.35th.Less.Than.Equal.85th","Greater.Than.85th")
+
+num_vars <- c("Time.to.Death","Followup.Time","INIT_AGE","INIT_BMI_CALC","Time.to.Transplant",
+              "AGE_DON","BMI_DON_CALC","COLD_ISCH_KI","CREAT_DON")
+
+data <- full_data %>% filter(Transplant == 1)
+
+#Categorical table
+
+cat_table <- do.call(bind_rows, lapply(1:length(prop_fields), function(t){
+  return(prop_out(prop_fields[t],prop_values[t]))
+})) %>% as.data.frame()
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+#Print table
+cat_table %>%
+  kable(booktabs = T, longtable = T, caption = "Summary Statistics, Categorical Data, Transplant Patients") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+#Numerical table
+sum_table1 <- do.call(rbind,lapply(num_vars, function(t){
+  return(num_out(t)) 
+  })) %>% as.data.frame
+row.names(sum_table1) <- NULL
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+sum_table1 %>%
+  kable(booktabs = T, caption = "Summary Statistics, Numerical Data, Transplant Patients") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+#######################
+### Non-Transplants ###
+#######################
+
+prop_fields <- c("Death","ON_DIALYSIS","GENDER","GENDER","ETHNICITY","ETHNICITY",
+                 "Initial.Diagnosis",rep("INIT.DX",times=8)
+                 )
+
+prop_values <- c("1","Y","M","F","1","0",
+                 NA,unique(full_data$INIT.DX))
+
+num_vars <- c("Time.to.Death","Followup.Time","INIT_AGE","INIT_BMI_CALC")
+
+data <- full_data %>% filter(Transplant == 0)
+
+#Categorical table
+
+cat_table <- do.call(bind_rows, lapply(1:length(prop_fields), function(t){
+  return(prop_out(prop_fields[t],prop_values[t]))
+})) %>% as.data.frame()
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+#Print table
+cat_table %>%
+  kable(booktabs = T, longtable = T, caption = "Summary Statistics, Categorical Data, Non-Transplant Patients") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+#Numerical table
+sum_table1 <- do.call(rbind,lapply(num_vars, function(t){
+  return(num_out(t)) 
+  })) %>% as.data.frame
+row.names(sum_table1) <- NULL
+write.csv(cat_table, file = paste0("./Table",table_iter,".csv"), row.names = FALSE)
+table_iter <- table_iter+1
+sum_table1 %>%
+  kable(booktabs = T, caption = "Summary Statistics, Numerical Data, Non-Transplant Patients") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F , position="center",
+                latex_options = c("HOLD_position","scale_down") )
+
+
+```
+
+We now get counts on patients who received a transplant, and whether or not their graft failed before death. We also do the same thing with patients who
+received retransplants.
+
+```{r}
+
+transplant_data <- full_data %>%
+  filter(Transplant == 1)
+
+the_tab <- table(transplant_data$Death,transplant_data$Transplant.Fail)
+names(dimnames(the_tab)) <- c("Death","Transplant.Fail")
+the_tab
+cat("\n \n")
+
+retransplant_data <- full_data %>%
+  filter(Retransplant == 1)
+
+the_tab <- table(retransplant_data$Death,retransplant_data$Retransplant.Fail)
+names(dimnames(the_tab)) <- c("Death","Retransplant.Fail")
+the_tab
+
+
+```
+
+
+
+## Survival Analysis
+
+We now fit a Cox regression model using transplant status as a time-varying covariate with possible stages of waitlist, transplanted, transplant failed,
+re-transplanted, and re-transplant failed, with re-transplant failed being a permanent state as we cannot know what happened after from our data. Since dialysis start time is our new index event, we
+no longer include dialysis in the model in anay way as all patients are actively on dialysis. We also include
+ethnicity, and gender as static binary covariates, and BMI and age as covariates that vary according to a spline term.
+
+```{r}
+
+#Source packages and custom functions we will use
+library(survival)
+library(survminer)
+
+#Set up to save plots
+plot_iter <- 1
+
+#Fit and display K-M curves
+S <- with(full_data, Surv(Followup.Time, Death))
+
+cat("Raw Kaplan-Meier Survival Estimates: \n")
+
+fit <- survfit(S~1)
+summary(fit, times = c(0,1,2,3,4,5))
+ggsurvplot(fit, full_data, ylim=c(0,1), xlim=c(0,5), conf.int = TRUE, color = c("#00BFC4"),
+           xlab = "Time from Dialysis Start (Years)", ylab = "Survival Probability",
+           ggtheme = theme(panel.grid.major = element_blank()),
+           risk.table = TRUE,
+           censor = FALSE, break.time.by = 1)
+ggsave(paste0("Figure",plot_iter,".png"))
+plot_iter <- plot_iter + 1
+
+cat("Cox Model Output Using Time-Varying Transplant Status Covariate: \n")
+
+full_data$id <- 1:nrow(full_data)
+full_data$Race <- relevel(as.factor(full_data$Race),ref="White")
+#full_data$Baseline.Dialysis <- relevel(as.factor(full_data$Baseline.Dialysis),ref="None")
+surv_data <- tmerge(full_data, full_data, id=id,
+                    Died = event(Followup.Time, Death), Received.Transplant=tdc(Time.to.Transplant),
+                    Transplant.Failed=tdc(Time.to.Fail), Received.Retransplant=tdc(Time.to.Retransplant),
+                    Retransplant.Failed=tdc(Time.to.Retransplant.Fail)#, Any.Dialysis = tdc(Time.to.Dialysis)
+                    ) %>%
+  select(id, Died, tstart, tstop, Received.Transplant, Transplant.Failed, Received.Retransplant, Retransplant.Failed,
+         INIT_AGE, INIT_BMI_CALC, GENDER, ETHNICITY, INIT.DX, Race#,Any.Dialysis, Baseline.Dialysis,
+         ) %>%
+  mutate(Transplant.Status = "Waitlist") %>%
+  mutate(Transplant.Status = ifelse(Received.Transplant == 1,"Transplant",Transplant.Status)) %>%
+  mutate(Transplant.Status = ifelse(Transplant.Failed == 1,"Failed",Transplant.Status)) %>%
+  mutate(Transplant.Status = ifelse(Received.Retransplant == 1,"Retransplant",Transplant.Status)) %>%
+  mutate(Transplant.Status = ifelse(Retransplant.Failed == 1,"Retransplant.Failed",Transplant.Status)) %>%
+  mutate(Transplant.Status = as.factor(Transplant.Status))
+surv_data$Transplant.Status <- relevel(surv_data$Transplant.Status,"Waitlist")
+model <- coxph(Surv(tstart,tstop,Died)~Transplant.Status+#Any.Dialysis+
+                 pspline(INIT_AGE)+pspline(INIT_BMI_CALC)+GENDER+ETHNICITY+Race+INIT.DX, data = surv_data, id=id)
+summary(model)
+
+
+```
+
+
+We see that hazard of death is about 1.47 times higher for patients that had a transplant, and then that transplant
+failed, as opposed to patients who never received a transplant to begin with. The confidence interval is fairly
+tight around this value as well, indicating we have high confidence in this estimate. However, it is worth noting that before 
+the transplants of these patients failed, there were at a lower estimated risk of death than those still on the waitlist.
+
+Initial transplant and retransplantation both seem to substantially reduce risk of death when a patient is in this state. However,
+the retransplant failing puts patients back into a riskier state, although not as risky as failure of the initial graft
+according to our estimates.
+
+We now look at several representative patients to observe how risk accumulates over time depending on transplant and failure status.
+Each patient has representative demographic characteristics, that being mean age, mean BMI, male sex, ethnicity 0, on dialysis, white race,
+and an initial diagnosis of type II diabetes. Patient 1 was never transplanted. All other patients were transplanted at 4 years (roughly
+median time), with a transplant failure time for patient 2 of 5 years, patient 3 of 6 years, etc., until patient 6, who does not have transplant
+failure in our observation period out to 10 years. For our purposes here, we ignore retransplants in this time period.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(10),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status="Waitlist",
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,10),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Average Patients") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+  scale_alpha_manual(0.2) +
+  scale_x_continuous(breaks=0:10)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+We see that, based on the plot, a patient who receives a transplant at 4 years would need it to last at least 3 more years before
+failing in order to possess a lower estimated cumulative hazard at 10 years than a comparable patient who spent that entire time on the
+waitlist. Unsurprisingly, the patient who never experienced transplant failure has the lowest estimated cumulative hazard at 10 years.
+
+We now make a similar plot to the above, but we now introduce retranstranplantation about 2 years after failure for each of the patients that
+failed. Thus, a representative patient may be transplanted at 4 years, fail at 5 years, and then is retransplanted at 7 years, and so on and so forth.
+We look at these patients out to 15 years in order to fully view the impact on these patients.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status="Waitlist",
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,15)
+ret_times <- c(7,8,9,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  if(ii<=length(ret_times)){
+  ret_time <- ret_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time),
+                 tstop=c(4,fail_time,ret_time,15),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant"),
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=ii+1)
+  } else{
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,15),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=ii+1)
+  }
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Average Patients, Retransplant") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+We see that all patients who receive a retransplant now have less accumulated risk than the strictly waitlist patient at 10 years, showing the importance of
+having the transplant or retransplant status as opposed to the high-risk failed transplant status.
+
+Next, we look at another representative group of patients. One was never transplanted, and remained on the waitlist for the entire duration. Another was
+transplanted at 4 years, and the transplant never failed. The third was transplant at 4 years, failed at 2 years, was re-transplanted 2 year later, and had
+that retransplant fail after 2 years. We also look at these patients out to 15 years to see the full effect.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status="Waitlist",
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(6,15)
+ret_times <- c(8,15)
+ret_fail_times <- c(10,15)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  ret_time <- ret_times[ii]
+  ret_fail_time <- ret_fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time,ret_fail_time),
+                 tstop=c(4,fail_time,ret_time,ret_fail_time,15),
+                 Died=0,
+                 INIT_AGE=mean(full_data$INIT_AGE),
+                 INIT_BMI_CALC=mean(full_data$INIT_BMI_CALC),
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant","Retransplant.Failed"),
+                 #ON_DIALYSIS="N",
+                 GENDER="M",
+                 ETHNICITY=0,
+                 Race="White",
+                 #Any.Dialysis=1,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Average Patients, Retransplant Failure") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","Failed Retransplant","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:15))
+
+```
+
+We see that the re-transplanted patient whose re-transplant failed does possess lower accumulated risk at the 15-year mark than the patient who never
+got off the waitlist, but the cumulative hazards are rather close.
+
+```{r}
+
+#Get most and least at risk patients at 5 years out assuming no one received any patients
+pred_data <- full_data %>%
+  select(INIT_AGE,INIT_BMI_CALC,GENDER,ON_DIALYSIS,ETHNICITY,INIT.DX,Race,id) %>%
+  mutate(Any.Dialysis=1,Died=0,tstart=0,tstop=0.5,Transplant.Status="Waitlist")
+pred_data$hazard <- as.numeric(predict(model, newdata = pred_data, id=id))
+max_pat <- pred_data[which.max(pred_data$hazard),] %>%
+  mutate(INIT_Age = 75)
+min_pat <- pred_data[which.min(pred_data$hazard),] %>%
+  mutate(Any.Dialysis = 0)
+
+
+```
+
+
+We now perform a similar exercise, except now our baseline characteristics will be those of the patient with the maximum hazard at time 0 (without
+regard for transplant status) and the patient with the minimum hazard at time 0. These patients will have the most and least risk of death at
+5 years assuming no transplant of any patients in our sample, and thus represent the patients most and least at risk of being left on the
+waitlist.
+
+The characteristics of the patients are printed below.
+
+```{r}
+
+cat("Characteristics of Patient Most At-Risk Without Transplant: \n")
+print(max_pat[1,1:10])
+
+cat("Characteristics of Patient Least At-Risk Without Transplant: \n")
+print(min_pat[1,1:10])
+
+```
+
+Note we forced the
+max risk patient's age to be 75 as opposed to 90 to be more representative of a population suitable for transplant.
+
+Next, we create representative plots of the cumulative hazard for patient with the same baseline characteristics as our maximum and minimum patients if
+they were to transplant, and potentially fail, at the same times as the representative patients we showed above.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(10),
+                 Died=0,
+                 INIT_AGE=max_pat$INIT_AGE,
+                 INIT_BMI_CALC=max_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 #ON_DIALYSIS=max_pat$ON_DIALYSIS,
+                 GENDER=max_pat$GENDER,Race=max_pat$Race,Any.Dialysis=1,
+                 ETHNICITY=max_pat$ETHNICITY,
+                 INIT.DX = max_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,10),
+                 Died=0,
+                 INIT_AGE=rep(max_pat$INIT_AGE,3),
+                 INIT_BMI_CALC=rep(max_pat$INIT_BMI_CALC,3),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 #ON_DIALYSIS=rep(max_pat$ON_DIALYSIS,3),
+                 GENDER=rep(max_pat$GENDER,3),Race=rep(max_pat$Race,3),Any.Dialysis=1,
+                 ETHNICITY=rep(max_pat$ETHNICITY,3),
+                 INIT.DX = max_pat$INIT.DX,
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Maximum Risk Patients") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:10)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(10),
+                 Died=0,
+                 INIT_AGE=min_pat$INIT_AGE,
+                 INIT_BMI_CALC=min_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 #ON_DIALYSIS=min_pat$ON_DIALYSIS,
+                 GENDER=min_pat$GENDER,Race=min_pat$Race,Any.Dialysis=0,
+                 ETHNICITY=min_pat$ETHNICITY,
+                 INIT.DX = min_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,10),
+                 Died=0,
+                 INIT_AGE=rep(min_pat$INIT_AGE,3),
+                 INIT_BMI_CALC=rep(min_pat$INIT_BMI_CALC,3),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 #ON_DIALYSIS=rep(min_pat$ON_DIALYSIS,3),
+                 GENDER=rep(min_pat$GENDER,3),Race=rep(min_pat$Race,3),Any.Dialysis=0,
+                 ETHNICITY=rep(min_pat$ETHNICITY,3),
+                 INIT.DX = min_pat$INIT.DX,
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Minimum Risk Patients") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:10)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+We see that the curves look nearly identical in shape, although the maximum risk patients will accumulate far more hazard over time. This is due to the
+nature of proportional hazards models, as when a transplant occurs, hazard is multiplied by a constant factor from our model, and when failure occurs,
+hazard is once again multiplied by a constant factor. This results in the curves looking identical in shape when we vary baseline characteristics,
+as while that baseline value changes, the values by which it gets multiplied are not, leading to similar changes in slope. 
+
+Next, we repeat our analysis of the most at-risk and least at-risk patients, this time integrating retransplant as we did above.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=max_pat$INIT_AGE,
+                 INIT_BMI_CALC=max_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 #ON_DIALYSIS=max_pat$ON_DIALYSIS,
+                 GENDER=max_pat$GENDER,Race=max_pat$Race,Any.Dialysis=1,
+                 ETHNICITY=max_pat$ETHNICITY,
+                 INIT.DX = max_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,15)
+ret_times <- c(7,8,9,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  if(ii<=length(ret_times)){
+  ret_time <- ret_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time),
+                 tstop=c(4,fail_time,ret_time,15),
+                 Died=0,
+                 INIT_AGE=rep(max_pat$INIT_AGE,4),
+                 INIT_BMI_CALC=rep(max_pat$INIT_BMI_CALC,4),
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant"),
+                 #ON_DIALYSIS=rep(max_pat$ON_DIALYSIS,4),
+                 GENDER=rep(max_pat$GENDER,4),Race=rep(max_pat$Race,4),Any.Dialysis=1,
+                 ETHNICITY=rep(max_pat$ETHNICITY,4),
+                 INIT.DX = max_pat$INIT.DX,
+                 id=ii+1)
+  } else{
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,15),
+                 Died=0,
+                 INIT_AGE=rep(max_pat$INIT_AGE,3),
+                 INIT_BMI_CALC=rep(max_pat$INIT_BMI_CALC,3),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 #ON_DIALYSIS=rep(max_pat$ON_DIALYSIS,3),
+                 GENDER=rep(max_pat$GENDER,3),Race=rep(max_pat$Race,3),Any.Dialysis=1,
+                 ETHNICITY=rep(max_pat$ETHNICITY,3),
+                 INIT.DX = max_pat$INIT.DX,
+                 id=ii+1)
+  }
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Maximum Risk Patients, Retransplant") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=min_pat$INIT_AGE,
+                 INIT_BMI_CALC=min_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 #ON_DIALYSIS=min_pat$ON_DIALYSIS,
+                 GENDER=min_pat$GENDER,Race=min_pat$Race,Any.Dialysis=0,
+                 ETHNICITY=min_pat$ETHNICITY,
+                 INIT.DX = min_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(5,6,7,8,15)
+ret_times <- c(7,8,9,10)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  if(ii<=length(ret_times)){
+  ret_time <- ret_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time),
+                 tstop=c(4,fail_time,ret_time,15),
+                 Died=0,
+                 INIT_AGE=rep(min_pat$INIT_AGE,4),
+                 INIT_BMI_CALC=rep(min_pat$INIT_BMI_CALC,4),
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant"),
+                 #ON_DIALYSIS=rep(min_pat$ON_DIALYSIS,4),
+                 GENDER=rep(min_pat$GENDER,4),Race=rep(min_pat$Race,4),Any.Dialysis=0,
+                 ETHNICITY=rep(min_pat$ETHNICITY,4),
+                 INIT.DX = min_pat$INIT.DX,
+                 id=ii+1)
+  } else{
+  nd <- data.frame(tstart=c(0,4,fail_time),
+                 tstop=c(4,fail_time,15),
+                 Died=0,
+                 INIT_AGE=rep(min_pat$INIT_AGE,3),
+                 INIT_BMI_CALC=rep(min_pat$INIT_BMI_CALC,3),
+                 Transplant.Status=c("Waitlist","Transplant","Failed"),
+                 ON_DIALYSIS=rep(min_pat$ON_DIALYSIS,3),
+                 GENDER=rep(min_pat$GENDER,3),Race=rep(min_pat$Race,3),Any.Dialysis=0,
+                 ETHNICITY=rep(min_pat$ETHNICITY,3),
+                 INIT.DX = min_pat$INIT.DX,
+                 id=ii+1)
+  }
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Minimum Risk Patients, Retransplant") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","FKT 1 Year","FKT 2 Year","FKT 3 Year","FKT 4 Year","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+Lastly, we repeat our analysis of a representative retransplant failure patient for our minimum and maximum risk patients.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=max_pat$INIT_AGE,
+                 INIT_BMI_CALC=max_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 ON_DIALYSIS=max_pat$ON_DIALYSIS,
+                 GENDER=max_pat$GENDER,Race=max_pat$Race,Any.Dialysis=1,
+                 ETHNICITY=max_pat$ETHNICITY,
+                 INIT.DX = max_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(6,15)
+ret_times <- c(8,15)
+ret_fail_times <- c(10,15)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  ret_time <- ret_times[ii]
+  ret_fail_time <- ret_fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time,ret_fail_time),
+                 tstop=c(4,fail_time,ret_time,ret_fail_time,15),
+                 Died=0,
+                 INIT_AGE=max_pat$INIT_AGE,
+                 INIT_BMI_CALC=max_pat$INIT_BMI_CALC,
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant","Retransplant.Failed"),
+                 ON_DIALYSIS=max_pat$ON_DIALYSIS,
+                 GENDER=max_pat$GENDER,Race=max_pat$Race,Any.Dialysis=1,
+                 ETHNICITY=max_pat$ETHNICITY,
+                 INIT.DX = max_pat$INIT.DX,
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Maximum Risk Patients") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","Failed Retransplant","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(15),
+                 Died=0,
+                 INIT_AGE=min_pat$INIT_AGE,
+                 INIT_BMI_CALC=min_pat$INIT_BMI_CALC,
+                 Transplant.Status = "Waitlist",
+                 ON_DIALYSIS=min_pat$ON_DIALYSIS,
+                 GENDER=min_pat$GENDER,Race=min_pat$Race,Any.Dialysis=0,
+                 ETHNICITY=min_pat$ETHNICITY,
+                 INIT.DX = min_pat$INIT.DX,
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+fail_times <- c(6,15)
+ret_times <- c(8,15)
+ret_fail_times <- c(10,15)
+for(ii in 1:length(fail_times)){
+  fail_time <- fail_times[ii]
+  ret_time <- ret_times[ii]
+  ret_fail_time <- ret_fail_times[ii]
+  nd <- data.frame(tstart=c(0,4,fail_time,ret_time,ret_fail_time),
+                 tstop=c(4,fail_time,ret_time,ret_fail_time,15),
+                 Died=0,
+                 INIT_AGE=min_pat$INIT_AGE,
+                 INIT_BMI_CALC=min_pat$INIT_BMI_CALC,
+                 Transplant.Status=c("Waitlist","Transplant","Failed","Retransplant","Retransplant.Failed"),
+                 ON_DIALYSIS=min_pat$ON_DIALYSIS,
+                 GENDER=min_pat$GENDER,Race=min_pat$Race,Any.Dialysis=0,
+                 ETHNICITY=min_pat$ETHNICITY,
+                 INIT.DX = min_pat$INIT.DX,
+                 id=ii+1)
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Maximum Risk Patients") +
+  scale_color_manual(name="Patient",labels=c("Dialysis Only","Failed Retransplant","Non-Failed DDKT"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+ scale_alpha_manual(0.2) +   scale_x_continuous(breaks=0:15)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+
+### Additional Analysis: Factors Affecting Graft Failure
+
+We now build a model looking at overall graft survival. We subset to only those patients with an initial transplant and were follow past that point, and we observe the
+cumulative incidence of transplant failure and death over time. Raw estimates of cumulative incidence can be seen below. Note that time 0 in this case was the time at
+which the initial transplant was performed.
+
+
+```{r}
+
+library(splines)
+
+model_data <- full_data %>%
+  filter(Transplant == 1) %>%
+  mutate(Transplant.to.Death = as.numeric(as.Date(Death.Date) - as.Date(Transplant.Date))/365) %>%
+  mutate(Transplant.to.End = as.numeric(as.Date(End.Date) - as.Date(Transplant.Date))/365) %>%
+  mutate(Transplant.to.Fail = as.numeric(as.Date(Fail.Date) - as.Date(Transplant.Date))/365) %>%
+  mutate(Time.to.Event = ifelse(Transplant.Fail == 1, Transplant.to.Fail,
+                                ifelse(Death == 1, Transplant.to.Death, Transplant.to.End))) %>%
+  filter(Time.to.Event > 0) %>%
+  mutate(INSULIN_DEP_DON = as.character(INSULIN_DEP_DON)) %>%
+  mutate(All.Causes = as.factor(ifelse(Transplant.Fail == 1, "Transplant Failure",
+                            ifelse(Death == 1, "Death", "Censored"))))
+
+#Filter out missings/unknowns
+varnames <- c("AGE",
+              "Race",
+  "GENDER",
+  "ETHNICITY",
+  "BMI_CALC",
+  "FUNC_STAT_TRR",
+  "DIAG_KI",
+  "PERIP_VASC",
+  "EXH_VASC_ACCESS",
+  "ON_DIALYSIS",
+  "DAYSWAIT_CHRON_KI",
+  "AGE_DON",
+  "BMI_DON_CALC",
+  "COD_CAD_DON",
+  "GENDER_DON",
+  "CREAT_DON",
+  "DIABETES_DON",
+  "HIST_HYPERTENS_DON",
+  "COLD_ISCH_KI",
+  "BLOOD_INF_DON",
+  "HIST_CIG_DON",
+  "ECD_DONOR",
+  "INOTROP_SUPPORT_DON",
+  "HEP_C_ANTI_DON")
+for(kk in 1:length(varnames)){
+  this_vec <- as.character(model_data[[varnames[kk]]])
+  keep_row <- !(is.na(this_vec) | this_vec=="" | this_vec=="U" | this_vec=="Unknown" | this_vec=="ND" | this_vec=="I")
+  model_data <- model_data[keep_row,]
+}
+#Break continuous variables into categories
+model_data <- model_data %>%
+  mutate(AGE_CAT = ifelse(AGE>= 18 & AGE <= 40,"18-40",
+                          ifelse(AGE >= 41 & AGE <= 60,"41-60",">60"))) %>%
+  mutate(AGE_DON_CAT = ifelse(AGE_DON>= 18 & AGE_DON <= 40,"18-40",
+                          ifelse(AGE_DON >= 41 & AGE_DON <= 60,"41-60",">60"))) %>%
+  mutate(BMI_CALC_CAT = ifelse(BMI_CALC < 20,"<20",
+                               ifelse(BMI_CALC >= 20 & BMI_CALC < 25,"20-24.9",
+                                       ifelse(BMI_CALC >= 25 & BMI_CALC < 30,"25-29.9",
+                                               ifelse(BMI_CALC >= 30 & BMI_CALC < 35,"30-34.9",">=35"))))) %>%
+  mutate(BMI_DON_CALC_CAT = ifelse(BMI_DON_CALC < 20,"<20",
+                               ifelse(BMI_DON_CALC >= 20 & BMI_DON_CALC < 25,"20-24.9",
+                                       ifelse(BMI_DON_CALC >= 25 & BMI_DON_CALC < 30,"25-29.9",
+                                               ifelse(BMI_DON_CALC >= 30 & BMI_DON_CALC < 35,"30-34.9",">=35")))))
+#Relevel all factors
+model_data$AGE_CAT <- relevel(as.factor(model_data$AGE_CAT), ref = "41-60")
+model_data$AGE_DON_CAT <- relevel(as.factor(model_data$AGE_DON_CAT), ref = "41-60")
+model_data$BMI_CALC_CAT <- relevel(as.factor(model_data$BMI_CALC_CAT), ref = "20-24.9")
+model_data$BMI_DON_CALC_CAT <- relevel(as.factor(model_data$BMI_DON_CALC_CAT), ref = "20-24.9")
+
+library(ggsurvfit)
+library(tidycmprsk)
+
+fit <- cuminc(Surv(Time.to.Event, All.Causes) ~ 1, data = model_data)
+kable(tidy(fit, times = c(0,1,2,3,4,5))[,1:8])
+fit %>%
+ggcuminc(outcome = c("Transplant Failure", "Death"),ggtheme = theme_bw(), palette = c("#00BFC4","#F8766D"),)  +
+  labs(x = "Time from Transplant (Years)") + 
+  xlim(c(0,5)) +
+  ylim(c(0,0.5)) +
+  add_confidence_interval() +
+  add_risktable()
+ggsave(paste0("Figure",plot_iter,".png"))
+plot_iter <- plot_iter + 1
+
+
+# logit_model <- glm(Mortality.3.Year~AGE_CAT+GENDER+ETHNICITY+BMI_CALC_CAT+FUNC_STAT_TRR+
+#                      DIAG_KI+PERIP_VASC+EXH_VASC_ACCESS+
+#                      #pspline(GFR)+
+#                      ON_DIALYSIS+
+#                      #PEAK_PRA+
+#                      DAYSWAIT_CHRON_KI+
+#                      AGE_DON_CAT+BMI_DON_CALC_CAT+ABO_MAT+COD_CAD_DON+GENDER_DON+CREAT_DON+
+#                      DIABETES_DON+
+#                      HIST_HYPERTENS_DON+COLD_ISCH_KI+BLOOD_INF_DON+
+#                      HIST_CIG_DON+ECD_DONOR+INOTROP_SUPPORT_DON+HEP_C_ANTI_DON
+#                    ,data = model_data, family = binomial())
+# #summary(logit_model)
+# tl <- length(coef(logit_model))
+# cat("Number of cases eligible to be put in model: ",length(logit_model$y),"\n")
+# cat("Calculated Odds Ratios for Effect with 95% CIs: \n")
+# model_table <- bind_cols(names(coef(logit_model)[2:tl]),round4(exp(coef(logit_model)[2:tl])),round4(exp(confint.default(logit_model)[2:tl,])))
+# colnames(model_table) <- c("Effect Name","Estimated OR","2.5% CI Bound","97.5% CI Bound")
+# kable(model_table)
+
+
+
+```
+
+We see that the cumulative incidence of each is rather low. We now build a competing risks regression model to see which factors affect risk of failed transplant.
+
+Reference: "Fine JP and Gray RJ (1999) A proportional hazards model for the subdistribution of a competing risk. JASA 94:496-509."
+
+Note that only 
+`r nrow(model_data)` subjects are included in this analysis, as we need variables to be fully observed among these patients to be able to include them in the model.
+Hazard ratios for categorical variables are presented in reference to the reference category; for example, the "AGE_CAT>60" effect is in reference to the age category of
+ages 41-60. Please ignore the p-values output by this analysis, as they are not relevant to an exploratory analysis such as this.
+
+```{r}
+
+model_data <- model_data %>%
+  mutate(All.Causes = as.factor(ifelse(Transplant.Fail == 1, "Transplant Failure",
+                            ifelse(Death == 1, "Death", "Censored"))))
+model_data$All.Causes <- relevel(as.factor(model_data$All.Causes), ref = "Censored")
+
+cat("Number of individuals used in model: ", nrow(model_data)," \n")
+cat("Table of events for this model: \n")
+table(model_data$All.Causes)
+
+# 
+# cr_model <- tidycmprsk::crr(Surv(Time.to.Event, All.Causes)~AGE_CAT+GENDER+ETHNICITY+BMI_CALC_CAT+FUNC_STAT_TRR+Race+
+#                      DIAG_KI+PERIP_VASC+EXH_VASC_ACCESS+
+#                      #pspline(GFR)+
+#                      #ON_DIALYSIS+
+#                      INIT.DX+
+#                      #PEAK_PRA+
+#                      DAYSWAIT_CHRON_KI+
+#                      AGE_DON_CAT+BMI_DON_CALC_CAT+as.character(COD_CAD_DON)+GENDER_DON+CREAT_DON+
+#                      DIABETES_DON+
+#                      HIST_HYPERTENS_DON+COLD_ISCH_KI+BLOOD_INF_DON+
+#                      HIST_CIG_DON+ECD_DONOR+INOTROP_SUPPORT_DON+HEP_C_ANTI_DON
+#                    ,data = model_data, failcode = "Transplant Failure")
+# saveRDS(cr_model,"./cr_model_dump.rds")
+
+cr_model <- readRDS("./cr_model_dump.rds")
+print(cr_model)
+
+
+```
+
+We see that a number of variables may put patients at more or less risk for a failed transplant, such as being on dialysis putting one at greater risk, or the
+donor being an ECD donor. These can be interpreted as other estimated hazard ratios of transplant failure can be; however, these hazard ratios adjust for the
+competing risk of death.
+
+### Additional Model: Survival After Graft Failure
+
+We now take a look at survival patients whose grafts failed. We first subset to only those patients whose initial transplants failed within 3 years. This is analysis 
+is similar to our previous survival analysis, except now our only time-varying covariate is retransplant status. Output of this model can be found below, as well as a
+raw Kaplan-Meier estimate for the entire cohort that .
+
+```{r}
+
+fail_data <- full_data %>%
+  filter(Transplant.Fail == 1) %>%
+  mutate(Fail.Followup.Time = Followup.Time-Time.from.Transplant.to.Fail) %>%
+  filter(Fail.Followup.Time > 0) %>%
+  mutate(Initial.Transplant = ifelse(Time.from.Transplant.to.Fail > 3,">3 Years","0-3 Years")) %>%
+  filter(Time.from.Transplant.to.Fail >= 0 & Time.from.Transplant.to.Fail <= 3) %>%
+  mutate(Fail.Age = INIT_AGE+Time.from.Transplant.to.Fail) %>%
+  mutate(FUNC_STAT_TRR = as.factor(as.character(FUNC_STAT_TRR)))
+
+#Fit and display K-M curves
+S <- with(fail_data, Surv(Fail.Followup.Time, Death))
+
+cat("Raw Kaplan-Meier Survival Estimates: \n")
+
+fit <- survfit(S~1)
+summary(fit, times = c(0,1,2,3,4,5))
+ggsurvplot(fit, fail_data, ylim=c(0,1), xlim=c(0,5), conf.int = TRUE, #color = c("#00BFC4"),
+           xlab = "Time from Graft Failure (Years)", ylab = "Survival Probability",
+           ggtheme = theme(panel.grid.major = element_blank()),
+           risk.table = TRUE,
+           censor = FALSE, break.time.by = 1)
+ggsave(paste0("Figure",plot_iter,".png"))
+plot_iter <- plot_iter + 1
+
+cat("Cox Model Output Using Time-Varying Re-Transplant Status Covariate: \n")
+
+fail_data$id <- 1:nrow(fail_data)
+surv_data <- tmerge(fail_data, fail_data, id=id,
+                    Died = event(Fail.Followup.Time, Death), Received.Retransplant=tdc(Time.from.Fail.to.Retransplant),
+                    Retransplant.Failed=tdc(Time.to.Retransplant.Fail-Time.from.Transplant.to.Fail)) %>%
+  select(id, Died, tstart, tstop, Received.Retransplant, Retransplant.Failed, Initial.Transplant,
+         INIT_AGE, INIT_BMI_CALC, GENDER, ON_DIALYSIS, ETHNICITY, INIT.DX, Fail.Age,Time.from.Transplant.to.Fail,
+         AGE_CAT,BMI_CALC_CAT,Race,
+         FUNC_STAT_TRR,DIAG_KI,PERIP_VASC,EXH_VASC_ACCESS,ON_DIALYSIS,INIT.DX,DAYSWAIT_CHRON_KI) %>%
+  mutate(Transplant.Status = "Failed") %>%
+  mutate(Transplant.Status = ifelse(Received.Retransplant == 1,"Retransplant",Transplant.Status)) %>%
+  mutate(Transplant.Status = ifelse(Retransplant.Failed == 1,"Retransplant.Failed",Transplant.Status)) %>%
+  mutate(Transplant.Status = as.factor(Transplant.Status))
+surv_data$Transplant.Status <- relevel(surv_data$Transplant.Status,"Failed")
+model <- coxph(Surv(tstart,tstop,Died)~Transplant.Status+
+                 AGE_CAT+BMI_CALC_CAT+GENDER+ETHNICITY+INIT.DX+Race+
+                 PERIP_VASC+EXH_VASC_ACCESS+DAYSWAIT_CHRON_KI,
+               data = surv_data, id=id)
+summary(model)
+
+
+```
+
+We create representative patients as we did before. Patients will be of mean age, mean BMI, not on dialysis, no retransplants, male, not on dialysis, mean number of days on
+the waitlist, EXH_VASC and PERIP_VASC of no, ethnicity of 0, and white race. Between each representative patient, we vary the initial diagnosis, with estimated
+survival shown below.
+
+```{r}
+
+
+nd <- data.frame(tstart=c(0),
+                 tstop=c(5),
+                 Died=0,
+                 AGE_CAT="41-60",
+                 BMI_CALC_CAT="25-29.9",
+                 DAYSWAIT_CHRON_KI=mean(fail_data$DAYSWAIT_CHRON_KI, na.rm=TRUE),
+                 EXH_VASC_ACCESS="N",
+                 PERIP_VASC="N",
+                 Transplant.Status = "Failed",
+                 ON_DIALYSIS="N",
+                 GENDER="M",Race="White",
+                 ETHNICITY=0,
+                 INIT.DX = "DIABETES MELLITUS - TYPE II",
+                 id=c(1))
+sfit <- survfit(model,newdata=nd,id=id)
+cum_haz_data <- bind_rows(data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=1))
+init_dxs <- c("DIABETES MELLITUS - TYPE I","FOCAL GLOMERULAR SCLEROSIS (FOCAL SEGMENTAL - FSG)",
+              "HYPERTENSIVE NEPHROSCLEROSIS","POLYCYSTIC KIDNEYS","OTHER")
+for(ii in 1:length(init_dxs)){
+  fail_time <- fail_times[ii]
+  nd <- data.frame(tstart=c(0),
+                 tstop=c(5),
+                 Died=0,
+                 AGE_CAT="41-60",
+                 BMI_CALC_CAT="25-29.9",
+                 DAYSWAIT_CHRON_KI=mean(fail_data$DAYSWAIT_CHRON_KI, na.rm=TRUE),
+                 EXH_VASC_ACCESS="N",
+                 PERIP_VASC="N",
+                 Transplant.Status = "Failed",
+                 ON_DIALYSIS="N",
+                 GENDER="M",Race="White",
+                 ETHNICITY=0,
+                 INIT.DX = init_dxs[ii],
+                 id=c(1))
+  sfit <- survfit(model,newdata=nd,id=id)
+  cum_haz_data <- bind_rows(cum_haz_data,data.frame(Time=sfit$time,Cumulative.Hazard=sfit$cumhaz,id=ii+1))
+}
+cum_haz_data <- cum_haz_data %>%
+  mutate(Est.Survival.Prob = exp(-1*Cumulative.Hazard))
+
+ggplot(data=cum_haz_data) + 
+  geom_line(aes(x=Time,y=Est.Survival.Prob,group=id,color=as.factor(id)),alpha=0.5,linewidth=1) + theme_light() +
+  ylab("Survival Probability") + xlab("Time (Years from Dialysis Start)") + ylim(c(0,1)) +
+  ggtitle("Estimated Survival, Representative Average Patients") +
+  scale_color_manual(name="Initial DX",labels=c("Type II Diabetes","Type I Diabetes","Focal Glomerular Sclerosis",
+                                                "Hypertensive Nephrosclerosis","Polycystic Kidneys","Other"),
+                                               values = c("red","gold1","green","cyan","blue","magenta")) +
+  scale_alpha_manual(0.2) +
+  scale_x_continuous(breaks=0:10)
+
+print(cum_haz_data %>% filter(Time %in% 1:10))
+
+```
+
+Those with type I and type II diabetes are estimated to have worse survival than other groups.
+
+
+### Listing and Transplants by Year
+
+Below I show the number of people entering the waitlist by year, and the number of transplant by year, in the entire dataset. I would have done
+histograms, but the scales for some of the later years break when doing this, so I present only tables.
+
+```{r}
+
+sum_data <- full_data %>%
+  mutate(Year = year(Start.Date)) %>%
+  group_by(Year) %>%
+  summarise(Count = n())
+
+cat("Counts of Waitlist Entries by Year")
+kable(sum_data)
+
+sum_data <- full_data %>%
+  filter(Transplant == 1) %>%
+  mutate(Year = year(Transplant.Date)) %>%
+  group_by(Year) %>%
+  summarise(Count = n())
+
+cat("Counts of Transplants by Year")
+kable(sum_data)
+
+
+```
+
+
+
+
+
+
+
+
+
+
